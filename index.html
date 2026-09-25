@@ -84,7 +84,7 @@
     <input type="file" id="fileInput" multiple style="display: none;">
     <label for="fileInput" class="dropzone-label" id="dropArea">
         <p>📂 여기를 터치/클릭하여 발주서 파일 선택 (또는 드래그 앤 드롭)</p>
-        <span>XLSX, XLS, CSV 지원 · 바코드 행 및 서식 노이즈 100% 자동 필터링</span>
+        <span>XLSX, XLS, CSV 지원 · 센터별 고유 연락처 정밀 분리 추출</span>
     </label>
 
     <div class="file-box">
@@ -143,7 +143,6 @@
         }
     });
 
-    // 품목 정규화 매핑 사전 (신규 에어핏 150D/200D 라인업 완벽 포함)
     const PRODUCT_RULES = [
         { regex: /CDST01/i, name: "크로커다일 20D 슬림핏 팬티스타킹 5매 CDST01" },
         { regex: /CDST02/i, name: "크로커다일 30D 슬림핏 팬티스타킹 2매 CDST02" },
@@ -175,14 +174,18 @@
         let digits = text.replace(/[^0-9]/g, "");
         if (digits.startsWith("82")) digits = "0" + digits.slice(2);
 
+        // 070 번호 규격 정규화
+        if (digits.startsWith("070")) {
+            if (digits.length === 11) return digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
+            if (digits.length === 12) return digits.replace(/(\d{3})(\d{4})(\d{5})/, "$1-$2-$3");
+            if (digits.length === 10) return digits.replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3");
+        }
         if (digits.startsWith("02")) {
             return digits.length === 9 ? digits.replace(/(\d{2})(\d{3})(\d{4})/, "$1-$2-$3") : digits.replace(/(\d{2})(\d{4})(\d{4})/, "$1-$2-$3");
         } else if (digits.length === 11) {
             return digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
         } else if (digits.length === 10) {
             return digits.replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3");
-        } else if (digits.length === 12 && digits.startsWith("070")) {
-            return digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
         }
         return text;
     }
@@ -191,7 +194,8 @@
         if (!val) return "";
         let text = String(val).trim();
         text = text.replace(/^(납품지주소|배송지주소|센터주소|주소|배송지|입고지)\s*[:：]\s*/i, "");
-        text = text.replace(/\(택배수령담당자\s*:?[^\)]*\)/g, "");
+        text = text.replace(/\(택배수령담당자\s*[:：]?[^\)]*\)/g, "");
+        text = text.replace(/택배수령담당자\s*[:：]?[\+0-9\s-]+/g, "");
         text = text.replace(/\s+/g, " ").trim();
         return text;
     }
@@ -199,13 +203,9 @@
     function normalizeProduct(prod) {
         if (!prod) return "미지정 상품";
         let str = String(prod).trim();
-        
-        // 1. 사전 정의 룰 대조
         for (let rule of PRODUCT_RULES) {
             if (rule.regex.test(str)) return rule.name;
         }
-
-        // 2. 미등록 상품 자동 정제 (접두사 [국내생산] 및 말미의 '_블랙', '_스킨' 옵션 노이즈 제거)
         str = str.replace(/^\[[^\]]+\]\s*/, "");
         str = str.replace(/_[가-힣a-zA-Z0-9/]+$/, "");
         return str.trim();
@@ -218,7 +218,6 @@
         return `${foundColor} / ${foundSize}`;
     }
 
-    // 파일 등록 리스너
     const fileInput = document.getElementById('fileInput');
     const dropArea = document.getElementById('dropArea');
 
@@ -289,7 +288,6 @@
         log("파일 목록을 비웠습니다.");
     });
 
-    // 엑셀 파서 (전체 시트 전수 조사 방식)
     async function parseWorkbook(file) {
         const buffer = await file.arrayBuffer();
         let workbook;
@@ -307,9 +305,9 @@
         const rawMatrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
         if (!rawMatrix || rawMatrix.length === 0) return null;
 
-        // ==========================================
-        // 1. 전체 시트 전수 스캔: 주소, 전화번호, 물류센터, 발주번호 추출
-        // ==========================================
+        // ==========================================================
+        // 1. 배송지 주소 및 '택배수령담당자' 전용 추출 (공급자 번호 완전 배제)
+        // ==========================================================
         let rawAddressText = "";
         let extractedPhone = "";
         let centerFromSheet = "";
@@ -322,11 +320,11 @@
                 const cellVal = String(row[c] || "").trim();
                 if (!cellVal) continue;
 
-                // 택배수령담당자 및 전화번호 추출
-                if (cellVal.includes("택배수령담당자") || /(?:\+82|010|070)[-\s]?\d{3,4}[-\s]?\d{4}/.test(cellVal)) {
-                    const phoneMatch = cellVal.match(/(?:\+82|010|070)[-\s]?\d{2,4}[-\s]?\d{4}/);
-                    if (phoneMatch && !extractedPhone) {
-                        extractedPhone = phoneMatch[0];
+                // [핵심 변경] '택배수령담당자' 텍스트가 직접 들어있는 셀에서만 번호 추출
+                if (cellVal.includes("택배수령담당자")) {
+                    const phoneMatch = cellVal.match(/택배수령담당자\s*[:：]?\s*([\+0-9\s-]+)/);
+                    if (phoneMatch && phoneMatch[1]) {
+                        extractedPhone = phoneMatch[1].trim();
                     }
                     if (cellVal.includes("시 ") || cellVal.includes("도 ") || cellVal.includes("로 ") || cellVal.includes("길 ") || cellVal.includes("동 ")) {
                         rawAddressText = cellVal;
@@ -336,9 +334,13 @@
                 // 주소 레이블 셀 탐색
                 if (!rawAddressText && /^(납품지주소|배송지주소|센터주소|주소|배송지|입고지)\s*[:：]/i.test(cellVal)) {
                     rawAddressText = cellVal;
+                    if (cellVal.includes("택배수령담당자")) {
+                        const pm = cellVal.match(/택배수령담당자\s*[:：]?\s*([\+0-9\s-]+)/);
+                        if (pm && pm[1]) extractedPhone = pm[1].trim();
+                    }
                 }
 
-                // 물류센터명 레이블 탐색
+                // 물류센터 레이블 탐색
                 if (!centerFromSheet && /^(물류센터|입고센터|입고지|배송지명|센터명|납품처)\s*[:：]/i.test(cellVal)) {
                     centerFromSheet = cellVal.replace(/^(물류센터|입고센터|입고지|배송지명|센터명|납품처)\s*[:：]\s*/i, "").trim();
                 }
@@ -350,9 +352,9 @@
             }
         }
 
-        // ==========================================
-        // 2. 품목 테이블 헤더 행 탐색 (스코어링)
-        // ==========================================
+        // ==========================================================
+        // 2. 품목 테이블 헤더 행 탐색
+        // ==========================================================
         const HEADER_PATTERNS = {
             center: /물류센터|입고센터|입고지|배송지명|센터명|납품처/i,
             orderNo: /발주번호|발주서번호|발주서No|주문번호|PO/i,
@@ -400,7 +402,6 @@
             if (colQty === -1 && HEADER_PATTERNS.qty.test(clean)) colQty = idx;
         });
 
-        // 컬럼명으로 못 찾았을 때 내용 패턴으로 보정
         if (dataRows.length > 0) {
             const sample = dataRows.slice(0, 15);
             const totalCols = headerRow.length || dataRows[0].length;
@@ -415,7 +416,6 @@
             }
         }
 
-        // 물류센터명 확정 (메타 셀 -> 컬럼 -> 파일명)
         let centerRaw = centerFromSheet;
         if (!centerRaw && colCenter !== -1) {
             for (let r of dataRows) {
@@ -430,7 +430,6 @@
             centerRaw = fnMatch ? fnMatch[0] : "미지정센터";
         }
 
-        // 발주번호 확정 (메타 셀 -> 컬럼 -> 파일명)
         let orderNo = orderNoFromSheet;
         if (!orderNo && colNo !== -1) {
             for (let r of dataRows) {
@@ -451,7 +450,6 @@
         };
     }
 
-    // 메인 변환 연산
     document.getElementById('btnExecute').addEventListener('click', async () => {
         if (loadedFiles.length === 0) return;
         const btn = document.getElementById('btnExecute');
@@ -459,7 +457,7 @@
         btn.innerText = "데이터 정제 연산 진행 중...";
 
         try {
-            log(">>> [단계 1] 발주서 파일 전수 스캔 및 센터 식별자 산출...");
+            log(">>> [단계 1] 발주서 파싱 및 센터별 고유 연락처 매핑 시작...");
             const fileRecords = [];
 
             for (let file of loadedFiles) {
@@ -469,10 +467,9 @@
                     continue;
                 }
                 fileRecords.push(res);
-                log(`- ${file.name} -> 센터: [${res.centerRaw}], 발주No: [${res.orderNo}]`);
+                log(`- ${file.name} -> 센터: [${res.centerRaw}], 수령담당자: [${res.extractedPhone || '미기재'}]`);
             }
 
-            // 글로벌 센터 중복 식별자 부여 (-1, -2 접미사)
             const centerCounts = {};
             fileRecords.forEach(r => centerCounts[r.centerRaw] = (centerCounts[r.centerRaw] || 0) + 1);
 
@@ -487,13 +484,14 @@
                 }
             });
 
-            log(">>> [단계 2] 바코드/서식 노이즈 제거 및 1·2번 프로세스 데이터 연산...");
+            log(">>> [단계 2] 바코드 차단 및 1·2번 프로세스 데이터 연산...");
             const p1Data = [];
             const p2Data = [];
 
             for (let rec of fileRecords) {
                 const { colProd, colOpt, colQty } = rec.mapping;
                 
+                // 각 물류센터 고유 전화번호 정규화
                 const cleanP = cleanPhone(rec.extractedPhone);
                 const cleanA = cleanAddress(rec.rawAddressText);
 
@@ -504,18 +502,10 @@
                     const oVal = colOpt !== -1 ? String(row[colOpt] || "").trim() : "";
                     const qRaw = colQty !== -1 ? String(row[colQty] || "").trim() : "";
 
-                    // ==========================================
-                    // 핵심 필터링 방어벽 (바코드 및 서식 노이즈 100% 제거)
-                    // ==========================================
                     if (!pVal) return;
-
-                    // 1. 순수 숫자 8~14자리 바코드 행 차단
                     if (/^\d{8,14}$/.test(pVal)) return;
-
-                    // 2. 발주서 최하단 서식 텍스트 차단
                     if (/^(유형|운송장\/차량번호|운송장|차량번호|합계|소계|총계|비고|공급자|확인|배송유형|입고유형)$/i.test(pVal)) return;
 
-                    // 3. 실제 유효 발주수량이 없는 서식/바코드 행 차단
                     const parsedQ = parseInt(qRaw);
                     if (isNaN(parsedQ) || parsedQ <= 0) return;
 
@@ -540,14 +530,12 @@
                 });
             }
 
-            // 1번 및 2번 프로세스 테이블 렌더링 & TSV 생성
             renderTable('tableP1View', p1Data, ["물류센터", "택배수령담당자", "주소", "상품명", "옵션", "발주수량"]);
             renderTable('tableP2View', p2Data, ["발주서 No.", "물류센터", "택배수령담당자", "주소", "발주수량"]);
 
             document.getElementById('tsvP1').value = generateTSV(p1Data, ["물류센터", "택배수령담당자", "주소", "상품명", "옵션", "발주수량"]);
             document.getElementById('tsvP2').value = generateTSV(p2Data, ["발주서 No.", "물류센터", "택배수령담당자", "주소", "발주수량"]);
 
-            // 엑셀 다운로드 링크 생성
             const wb1 = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb1, XLSX.utils.json_to_sheet(p1Data), "마스터");
             const blob1 = new Blob([XLSX.write(wb1, { bookType: 'xlsx', type: 'array' })], { type: "application/octet-stream" });
@@ -560,11 +548,10 @@
             document.getElementById('linkP2').href = URL.createObjectURL(blob2);
             document.getElementById('resultSection').style.display = "block";
 
-            // 자동 다운로드 실행
             XLSX.writeFile(wb1, "1번_상품명_옵션분리형_마스터.xlsx");
             setTimeout(() => XLSX.writeFile(wb2, "2번_1문서1행_택배송장등록용.xlsx"), 600);
 
-            log(`>>> [완료] 정제 성공! (1번 마스터: ${p1Data.length}행, 2번 송장압축: ${p2Data.length}행)`);
+            log(`>>> [완료] 정제 성공! (1번: ${p1Data.length}행, 2번: ${p2Data.length}행)`);
         } catch (err) {
             log("[오류] " + err.message);
             alert("처리 중 에러 발생: " + err.message);
