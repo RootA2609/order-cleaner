@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>물류 발주서 정규화 & 통합 집계 엔진 (무결성 강화형)</title>
+    <title>물류 발주서 동적 정규화 & 통합 집계 엔진</title>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script>
         if (typeof XLSX === 'undefined') {
@@ -20,7 +20,6 @@
             --bg: #f4f7f6;
             --card-bg: #ffffff;
             --border: #dcdde1;
-            --danger: #e74c3c;
         }
         * { box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Malgun Gothic", sans-serif; background-color: var(--bg); margin: 0; padding: 20px 15px; color: #333; line-height: 1.5; }
@@ -73,7 +72,6 @@
         th { background: #f1f2f6; position: sticky; top: 0; padding: 8px 10px; border-bottom: 2px solid var(--border); color: #333; z-index: 1; }
         td { padding: 7px 10px; border-bottom: 1px solid #eee; white-space: nowrap; }
         tr:nth-child(even) { background-color: #f9f9f9; }
-        .warn-cell { color: var(--danger); font-weight: bold; background-color: #fde8e7; }
 
         textarea.tsv-area { width: 100%; height: 110px; border: none; padding: 10px; font-family: Consolas, monospace; font-size: 11px; background: #fafafa; color: #444; resize: vertical; box-sizing: border-box; }
         .log-box { margin-top: 20px; background: #2f3640; color: #f5f6fa; padding: 15px; font-family: Consolas, monospace; font-size: 12px; border-radius: 6px; height: 130px; overflow-y: auto; white-space: pre-wrap; line-height: 1.5; }
@@ -83,14 +81,14 @@
 
 <div class="container">
     <div class="header">
-        <h1>물류 발주서 정규화 & 통합 집계 엔진</h1>
-        <span class="badge" id="engineStatus">엔진 로딩 중...</span>
+    <h1>물류 발주서 원문 정규화 & 통합 집계 엔진 <span style="font-size: 13px; color: #7f8c8d; font-weight: normal; vertical-align: middle; margin-left: 6px;">v2.5</span></h1>
+    <span class="badge" id="engineStatus">엔진 로딩 중...</span>
     </div>
 
     <input type="file" id="fileInput" multiple style="display: none;">
     <label for="fileInput" class="dropzone-label" id="dropArea">
         <p>📂 여기를 터치/클릭하여 발주서 파일 선택 (또는 드래그 앤 드롭)</p>
-        <span>XLSX, XLS, CSV 지원 · 센터별 정렬 & 품목별 집계 & 데이터 무결성 검증</span>
+        <span>XLSX, XLS, CSV 지원 · 원문 상품명·옵션 자율 보존 매칭 & 센터별 연속 정렬</span>
     </label>
 
     <div class="file-box">
@@ -112,7 +110,6 @@
             <button class="btn-download btn-p3" onclick="downloadExcel('wb3')">📊 3번 품목총합 엑셀 다운로드</button>
         </div>
 
-        <!-- 1번 프로세스 -->
         <div class="tab-box">
             <div class="tab-header">
                 <span class="tab-title">📋 [1번 프로세스] 상품명·옵션 분리형 (재고/출고 매칭용 - 센터별 정렬)</span>
@@ -122,7 +119,6 @@
             <textarea class="tsv-area" id="tsvP1" readonly></textarea>
         </div>
 
-        <!-- 2번 프로세스 -->
         <div class="tab-box">
             <div class="tab-header">
                 <span class="tab-title">📦 [2번 프로세스] 1문서 1행 압축형 (택배 송장 등록용 - 센터별 정렬)</span>
@@ -132,7 +128,6 @@
             <textarea class="tsv-area" id="tsvP2" readonly></textarea>
         </div>
 
-        <!-- 3번 프로세스 -->
         <div class="tab-box">
             <div class="tab-header" style="background: #5b2c6f;">
                 <span class="tab-title">📊 [3번 프로세스] 전체 발주 품목별 총 수량 집계 (센터 무관)</span>
@@ -163,24 +158,78 @@
         }
     });
 
-    const PRODUCT_RULES = [
-        { regex: /CDST01/i, name: "크로커다일 20D 슬림핏 팬티스타킹 5매 CDST01" },
-        { regex: /CDST02/i, name: "크로커다일 30D 슬림핏 팬티스타킹 2매 CDST02" },
-        { regex: /CDST03/i, name: "크로커다일 40D 슬림핏 팬티스타킹 2매 CDST03" },
-        { regex: /CDST04/i, name: "크로커다일 40D 착압 힙업 팬티스타킹 1매 CDST04" },
-        { regex: /CDST05/i, name: "크로커다일 80D 슬림핏 팬티스타킹 2매 CDST05" },
-        { regex: /CDST09|골프\s*팬티스타킹/i, name: "크로커다일 30D UV차단 착압 올트임방지 골프 팬티스타킹 1매 CDST09" },
-        { regex: /CDST10|종아리\s*압박밴드/i, name: "크로커다일 스포츠 발등 커버형 종아리 압박밴드 양쪽착용 세트 CDST10 1세트" },
-        { regex: /CDST11|뒷꿈치풋패드/i, name: "크로커다일 프리미엄 스포츠 각질케어 뒷꿈치풋패드 2세트 CDST11" },
-        { regex: /QU-SL02|종아리슬리브/i, name: "퀵실버 국내산 프리미엄 스포츠 종아리슬리브 압박보호대 1세트 QU-SL02" },
-        { regex: /QU-MK01|쿨마스크/i, name: "퀵실버 국내산 UV자외선차단 AQUA냉감 쿨마스크 1개 QU-MK01" },
-        { regex: /쿨토시/i, name: "퀵실버 국내산 UV자외선차단 심리스 AQUA 냉감 쿨토시 손등형" },
-        { regex: /150D|NEW에어핏\s*150D/i, name: "크로커다일 NEW에어핏 150D 슬림 스타킹" },
-        { regex: /200D|NEW에어핏\s*200D/i, name: "크로커다일 NEW에어핏 200D 착압 힙업 스타킹" }
+    // 범용 색상 동의어 매핑
+    const COLOR_DICTIONARY = [
+        { regex: /검정|블랙|black|검은색/i, name: "블랙" },
+        { regex: /스킨|살구|베이지|연살구|누드|skin|apricot/i, name: "스킨" },
+        { regex: /화이트|흰색|백색|white/i, name: "화이트" },
+        { regex: /커피|커피색|브라운|갈색|coffee/i, name: "커피" },
+        { regex: /그레이|회색|gray|grey/i, name: "그레이" },
+        { regex: /차콜|먹색|charcoal/i, name: "차콜" },
+        { regex: /네이비|남색|곤색|navy/i, name: "네이비" },
+        { regex: /핑크|분홍|pink/i, name: "핑크" }
     ];
 
-    const COLORS = ["스킨", "블랙", "화이트", "살구", "커피", "그레이", "차콜", "네이비", "베이지", "핑크"];
-    const SIZES = ["FREE", "L/XL", "S/M", "M/L", "S", "M", "L", "XL"];
+    const SIZES = ["L/XL", "S/M", "M/L", "2XL", "3XL", "XL", "L", "M", "S", "FREE"];
+
+    // [핵심] 고유코드 사전 배제: 원문 텍스트 기반 자율 짝 맞추기 함수
+    function pairProductAndOption(rawProd, rawOpt) {
+        let p = String(rawProd || "").trim();
+        let o = String(rawOpt || "").trim();
+
+        // 1. 등록옵션명에 실제 상세 상품명이 통째로 들어있는 특수 양식 대응
+        // (예: 등록옵션명 = '[국내생산]엑스발란스 80D라인핏 ..._검정 FREE')
+        let sourceP = p;
+        let sourceO = o;
+        if (o.length > 15 && /_[가-힣a-zA-Z0-9\s/]+$/.test(o)) {
+            sourceP = o;
+            sourceO = "";
+        }
+
+        // 2. 상품명 정제: 선두 [태그] 제거
+        let cleanP = sourceP.replace(/^\[[^\]]+\]\s*/, "");
+
+        // 3. 상품명 끝단에 붙은 옵션 꼬리표(_검정 FREE, _스킨 등) 분리
+        let trailingOpt = "";
+        const tailMatch = cleanP.match(/_([가-힣a-zA-Z0-9\s/]+)$/);
+        if (tailMatch) {
+            trailingOpt = tailMatch[1].trim();
+            cleanP = cleanP.substring(0, tailMatch.index).trim();
+        }
+        cleanP = cleanP.replace(/\s+/g, " ").trim();
+
+        // 4. 옵션 후보 문자열 결합
+        let combOpt = `${sourceO} ${trailingOpt}`.trim();
+        if (!combOpt && o) combOpt = o;
+
+        // 5. 색상 판정
+        let foundColor = null;
+        for (let item of COLOR_DICTIONARY) {
+            if (item.regex.test(combOpt)) {
+                foundColor = item.name;
+                break;
+            }
+        }
+        if (!foundColor) {
+            // 사전에 없는 특정 단어(예: 유발, 고리형 등)는 원문 단어 보존
+            foundColor = combOpt ? combOpt.split(/[\s/_]/)[0].trim() : "스킨";
+        }
+
+        // 6. 사이즈 판정
+        let foundSize = "FREE";
+        for (let sz of SIZES) {
+            const regex = new RegExp(`(?:^|[\\s/_,-])(${sz})(?:$|[\\s/_,-])`, "i");
+            if (regex.test(combOpt)) {
+                foundSize = sz.toUpperCase();
+                break;
+            }
+        }
+
+        return {
+            product: cleanP || p,
+            option: `${foundColor} / ${foundSize}`
+        };
+    }
 
     function log(msg) {
         const box = document.getElementById("logView");
@@ -188,7 +237,6 @@
         box.scrollTop = box.scrollHeight;
     }
 
-    // 쉼표 및 문자열 제거 후 정수 변환 (데이터 무결성 방어)
     function cleanQuantity(val) {
         if (val === null || val === undefined) return 0;
         let str = String(val).replace(/,/g, '').trim();
@@ -225,29 +273,6 @@
         text = text.replace(/택배수령담당자\s*[:：]?[\+0-9\s-]+/g, "");
         text = text.replace(/\s+/g, " ").trim();
         return text;
-    }
-
-    function normalizeProduct(prod) {
-        if (!prod) return "미지정 상품";
-        let str = String(prod).trim();
-        for (let rule of PRODUCT_RULES) {
-            if (rule.regex.test(str)) return rule.name;
-        }
-        str = str.replace(/^\[[^\]]+\]\s*/, "");
-        str = str.replace(/_[가-힣a-zA-Z0-9/]+$/, "");
-        return str.trim();
-    }
-
-    // 침묵적 스킨 강제 할당 방지: 식별 불가 시 원본 유지 및 플래그 표기
-    function normalizeOption(opt, prod) {
-        const comb = `${opt || ""} ${prod || ""}`;
-        let foundColor = COLORS.find(c => comb.includes(c));
-        let foundSize = SIZES.find(s => new RegExp(`\\b${s}\\b`, 'i').test(comb)) || "FREE";
-
-        if (!foundColor) {
-            foundColor = opt ? opt.trim() : "색상확인필요";
-        }
-        return `${foundColor} / ${foundSize}`;
     }
 
     const fileInput = document.getElementById('fileInput');
@@ -288,7 +313,7 @@
             }
         });
         renderList();
-        log(`${count}개 파일 추가 등록 (총 ${loadedFiles.length}개 준비)`);
+        log(`${count}개 파일 등록 (총 ${loadedFiles.length}개 준비)`);
     }
 
     function renderList() {
@@ -327,7 +352,6 @@
         const ext = file.name.split('.').pop().toLowerCase();
 
         if (ext === 'csv') {
-            // EUC-KR 우선 디코딩 후 깨짐 기호(\uFFFD) 검출 시 UTF-8로 폴백
             let text = new TextDecoder('euc-kr').decode(buffer);
             if (text.includes('\uFFFD')) {
                 text = new TextDecoder('utf-8').decode(buffer);
@@ -384,8 +408,10 @@
         const HEADER_PATTERNS = {
             center: /물류센터|입고센터|입고지|배송지명|센터명|납품처/i,
             orderNo: /발주번호|발주서번호|발주서No|주문번호|PO/i,
-            prod: /상품명|등록상품명|발주상품명|노출상품명|품목명|품명|매입상품명/i,
-            opt: /옵션명|등록옵션명|옵션|품목상세|옵션정보/i,
+            // 노출상품명보다 상세 등록상품명을 우선 매칭
+            prodReg: /등록상품명|발주상품명/i,
+            prodGen: /상품명|노출상품명|품목명|품명|매입상품명/i,
+            opt: /등록옵션명|옵션명|옵션|품목상세|옵션정보/i,
             qty: /발주수량|수량|입고예정수량|주문수량/i
         };
 
@@ -419,15 +445,25 @@
 
         let colCenter = -1, colNo = -1, colProd = -1, colOpt = -1, colQty = -1;
 
+        // 1차: 등록상품명 우선 탐색
         headerRow.forEach((h, idx) => {
             const clean = String(h).replace(/[\s\r\n]+/g, "");
             if (colCenter === -1 && HEADER_PATTERNS.center.test(clean)) colCenter = idx;
             if (colNo === -1 && HEADER_PATTERNS.orderNo.test(clean)) colNo = idx;
-            if (colProd === -1 && HEADER_PATTERNS.prod.test(clean)) colProd = idx;
+            if (colProd === -1 && HEADER_PATTERNS.prodReg.test(clean)) colProd = idx;
             if (colOpt === -1 && HEADER_PATTERNS.opt.test(clean)) colOpt = idx;
             if (colQty === -1 && HEADER_PATTERNS.qty.test(clean)) colQty = idx;
         });
 
+        // 등록상품명이 없으면 일반 상품명 매핑
+        if (colProd === -1) {
+            headerRow.forEach((h, idx) => {
+                const clean = String(h).replace(/[\s\r\n]+/g, "");
+                if (colProd === -1 && HEADER_PATTERNS.prodGen.test(clean)) colProd = idx;
+            });
+        }
+
+        // 내용 패턴 보정
         if (dataRows.length > 0) {
             const sample = dataRows.slice(0, 15);
             const totalCols = headerRow.length || dataRows[0].length;
@@ -435,10 +471,10 @@
                 const vals = sample.map(r => String(r[c] || "").trim());
                 const joined = vals.join(" ");
 
-                if (colProd === -1 && /CDST|QU-|크로커다일|스타킹|쿨토시|에어핏/i.test(joined)) colProd = c;
-                if (colOpt === -1 && (joined.includes("스킨") || joined.includes("블랙") || joined.includes("FREE"))) colOpt = c;
+                if (colProd === -1 && /스타킹|슬리브|풋패드|마스크|토시|밴드/i.test(joined)) colProd = c;
+                if (colOpt === -1 && (joined.includes("스킨") || joined.includes("블랙") || joined.includes("검정") || joined.includes("FREE"))) colOpt = c;
                 if (colQty === -1 && vals.filter(v => v !== "").length > 0 && vals.every(v => !v || /^[0-9,]+$/.test(v))) colQty = c;
-                if (colCenter === -1 && /인천|창원|동탄|고양|대구|덕평|안성|호법|서울|양산|센터|FC/i.test(joined)) colCenter = c;
+                if (colCenter === -1 && /인천|창원|동탄|고양|대구|덕평|안성|호법|서울|양산|시흥|이천|센터|FC/i.test(joined)) colCenter = c;
             }
         }
 
@@ -452,7 +488,7 @@
             }
         }
         if (!centerRaw) {
-            const fnMatch = file.name.match(/(인천\d*|창원\d*|동탄\d*|고양\d*|대구\d*|덕평\d*|안성\d*|호법\d*|용인\d*|화성\d*|목천\d*|이천\d*|칠곡\d*|김해\d*|서울\d*|양산\d*|[가-힣]+센터|[가-힣]+FC)/i);
+            const fnMatch = file.name.match(/(인천\d*|창원\d*|동탄\d*|고양\d*|대구\d*|덕평\d*|안성\d*|호법\d*|용인\d*|화성\d*|목천\d*|이천\d*|칠곡\d*|김해\d*|서울\d*|양산\d*|시흥\d*|[가-힣]+센터|[가-힣]+FC)/i);
             centerRaw = fnMatch ? fnMatch[0] : "미지정센터";
         }
 
@@ -466,7 +502,6 @@
             }
         }
         if (!orderNo) {
-            // 파일명에서 YYYYMMDD 날짜 접두사 이후의 번호 체계를 우선 추출
             const poMatch = file.name.match(/(?:PO|발주|주문)?[_-]?(\d{6,})/i);
             orderNo = poMatch ? poMatch[1] : file.name.replace(/\.[^/.]+$/, "");
         }
@@ -498,7 +533,7 @@
                 log(`- ${file.name} -> 센터: [${res.centerId}], 수령인 연락처: [${res.extractedPhone || '미기재'}]`);
             }
 
-            log(">>> [단계 2] 바코드 차단, 수량 검증 및 1·2·3번 프로세스 연산...");
+            log(">>> [단계 2] 원문 상품명·옵션 동적 짝 맞춤 및 1·2·3번 프로세스 연산...");
             let p1Data = [];
             let p2Data = [];
 
@@ -515,22 +550,23 @@
                     const qRaw = colQty !== -1 ? String(row[colQty] || "").trim() : "";
 
                     if (!pVal) return;
-                    // 바코드 및 불필요 메타 헤더 차단
                     if (/^\d{8,14}$/.test(pVal)) return;
                     if (/^(유형|운송장\/차량번호|운송장|차량번호|합계|소계|총계|비고|공급자|확인|배송유형|입고유형)$/i.test(pVal)) return;
 
-                    // 쉼표 방어 수량 파싱
                     const parsedQ = cleanQuantity(qRaw);
                     if (parsedQ <= 0) return;
 
                     docTotalQty += parsedQ;
 
+                    // [핵심] 원문 기반 자율 짝 맞추기 실행
+                    const paired = pairProductAndOption(pVal, oVal);
+
                     p1Data.push({
                         "물류센터": rec.centerId,
                         "택배수령담당자": cleanP,
                         "주소": cleanA,
-                        "상품명": normalizeProduct(pVal),
-                        "옵션": normalizeOption(oVal, pVal),
+                        "상품명": paired.product,
+                        "옵션": paired.option,
                         "발주수량": parsedQ
                     });
                 });
@@ -544,11 +580,11 @@
                 });
             }
 
-            // 물류센터 기준 가나다 정렬
+            // 물류센터 기준 가나다 순 연속 정렬 (같은 센터끼리 묶음)
             p1Data.sort((a, b) => a["물류센터"].localeCompare(b["물류센터"], 'ko'));
             p2Data.sort((a, b) => a["물류센터"].localeCompare(b["물류센터"], 'ko'));
 
-            // 프로세스 3: 센터 무관 품목별 총 발주수량 집계
+            // 프로세스 3: 센터 무관 품목별 총 발주수량 합산 집계
             const p3Map = new Map();
             p1Data.forEach(item => {
                 const key = `${item["상품명"]}___${item["옵션"]}`;
@@ -577,7 +613,7 @@
             document.getElementById('tsvP2').value = generateTSV(p2Data, ["발주서 No.", "물류센터", "택배수령담당자", "주소", "발주수량"]);
             document.getElementById('tsvP3').value = generateTSV(p3Data, ["상품명", "옵션", "발주수량"]);
 
-            // 워크북 생성
+            // 엑셀 워크북 메모리 저장 (자동 다운로드 방지)
             const wb1 = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb1, XLSX.utils.json_to_sheet(p1Data), "마스터");
 
@@ -590,10 +626,10 @@
             currentWorkbooks = { wb1, wb2, wb3 };
 
             document.getElementById('resultSection').style.display = "block";
-            log(`>>> [연산 완료] 정제 및 무결성 검증 성공. 파일 다운로드가 준비되었습니다.`);
+            log(`>>> [연산 완료] 원문 짝 맞춤 및 집계 완료. 상단 버튼을 클릭해 엑셀을 내려받으십시오.`);
         } catch (err) {
             log("[오류] " + err.message);
-            alert("처리 중 치명적 에러 발생: " + err.message);
+            alert("처리 중 에러 발생: " + err.message);
         } finally {
             btn.disabled = false;
             btn.innerText = "⚡ 1·2·3번 프로세스 일괄 연산 시작";
@@ -602,7 +638,7 @@
 
     function downloadExcel(type) {
         if (!currentWorkbooks[type]) {
-            alert("연산된 워크북 데이터가 존재하지 않습니다.");
+            alert("먼저 발주서 파일을 인입하고 연산을 실행하십시오.");
             return;
         }
         if (type === 'wb1') XLSX.writeFile(currentWorkbooks.wb1, "1번_상품명_옵션분리형_마스터.xlsx");
@@ -614,11 +650,7 @@
         const wrap = document.getElementById(containerId);
         let html = '<table><thead><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
         data.forEach(r => {
-            html += '<tr>' + cols.map(c => {
-                const val = r[c] !== undefined ? r[c] : '';
-                const isWarn = String(val).includes("확인필요");
-                return `<td class="${isWarn ? 'warn-cell' : ''}">${val}</td>`;
-            }).join('') + '</tr>';
+            html += '<tr>' + cols.map(c => `<td>${r[c] !== undefined ? r[c] : ''}</td>`).join('') + '</tr>';
         });
         html += '</tbody></table>';
         wrap.innerHTML = html;
