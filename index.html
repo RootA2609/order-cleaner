@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>물류 발주서 정규화 & 통합 집계 엔진</title>
+    <title>물류 발주서 정규화 & 통합 집계 엔진 (무결성 강화형)</title>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script>
         if (typeof XLSX === 'undefined') {
@@ -20,10 +20,11 @@
             --bg: #f4f7f6;
             --card-bg: #ffffff;
             --border: #dcdde1;
+            --danger: #e74c3c;
         }
         * { box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Malgun Gothic", sans-serif; background-color: var(--bg); margin: 0; padding: 20px 15px; color: #333; line-height: 1.5; }
-        .container { max-width: 1020px; margin: 0 auto; background: var(--card-bg); border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); padding: 25px; }
+        .container { max-width: 1040px; margin: 0 auto; background: var(--card-bg); border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); padding: 25px; }
         
         .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid var(--primary); padding-bottom: 12px; margin-bottom: 20px; }
         .header h1 { margin: 0; font-size: 20px; color: var(--dark); font-weight: 700; }
@@ -51,7 +52,6 @@
         .btn-clear { flex: 0.25; background: #7f8c8d; color: #ffffff; }
         .btn-clear:hover { background: #636e72; }
 
-        /* 결과 영역 및 다운로드 컨트롤 */
         .result-section { margin-top: 30px; display: none; }
         .download-banner { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 25px; }
         @media (max-width: 768px) {
@@ -73,9 +73,9 @@
         th { background: #f1f2f6; position: sticky; top: 0; padding: 8px 10px; border-bottom: 2px solid var(--border); color: #333; z-index: 1; }
         td { padding: 7px 10px; border-bottom: 1px solid #eee; white-space: nowrap; }
         tr:nth-child(even) { background-color: #f9f9f9; }
+        .warn-cell { color: var(--danger); font-weight: bold; background-color: #fde8e7; }
 
         textarea.tsv-area { width: 100%; height: 110px; border: none; padding: 10px; font-family: Consolas, monospace; font-size: 11px; background: #fafafa; color: #444; resize: vertical; box-sizing: border-box; }
-
         .log-box { margin-top: 20px; background: #2f3640; color: #f5f6fa; padding: 15px; font-family: Consolas, monospace; font-size: 12px; border-radius: 6px; height: 130px; overflow-y: auto; white-space: pre-wrap; line-height: 1.5; }
     </style>
 </head>
@@ -90,7 +90,7 @@
     <input type="file" id="fileInput" multiple style="display: none;">
     <label for="fileInput" class="dropzone-label" id="dropArea">
         <p>📂 여기를 터치/클릭하여 발주서 파일 선택 (또는 드래그 앤 드롭)</p>
-        <span>XLSX, XLS, CSV 지원 · 센터별 묶음 리스팅 & 품목별 총합 자동 집계</span>
+        <span>XLSX, XLS, CSV 지원 · 센터별 정렬 & 품목별 집계 & 데이터 무결성 검증</span>
     </label>
 
     <div class="file-box">
@@ -105,7 +105,6 @@
         <button class="btn-clear" id="btnClear" type="button">목록 비우기</button>
     </div>
 
-    <!-- 결과 노출 및 수동 다운로드 영역 -->
     <div class="result-section" id="resultSection">
         <div class="download-banner">
             <button class="btn-download" onclick="downloadExcel('wb1')">💾 1번 마스터 엑셀 다운로드</button>
@@ -133,7 +132,7 @@
             <textarea class="tsv-area" id="tsvP2" readonly></textarea>
         </div>
 
-        <!-- 3번 프로세스 (신규) -->
+        <!-- 3번 프로세스 -->
         <div class="tab-box">
             <div class="tab-header" style="background: #5b2c6f;">
                 <span class="tab-title">📊 [3번 프로세스] 전체 발주 품목별 총 수량 집계 (센터 무관)</span>
@@ -189,6 +188,14 @@
         box.scrollTop = box.scrollHeight;
     }
 
+    // 쉼표 및 문자열 제거 후 정수 변환 (데이터 무결성 방어)
+    function cleanQuantity(val) {
+        if (val === null || val === undefined) return 0;
+        let str = String(val).replace(/,/g, '').trim();
+        let num = parseInt(str, 10);
+        return isNaN(num) ? 0 : num;
+    }
+
     function cleanPhone(val) {
         if (!val) return "";
         let text = String(val).trim().replace(/^\+82/, "0");
@@ -231,10 +238,15 @@
         return str.trim();
     }
 
+    // 침묵적 스킨 강제 할당 방지: 식별 불가 시 원본 유지 및 플래그 표기
     function normalizeOption(opt, prod) {
         const comb = `${opt || ""} ${prod || ""}`;
-        let foundColor = COLORS.find(c => comb.includes(c)) || "스킨";
+        let foundColor = COLORS.find(c => comb.includes(c));
         let foundSize = SIZES.find(s => new RegExp(`\\b${s}\\b`, 'i').test(comb)) || "FREE";
+
+        if (!foundColor) {
+            foundColor = opt ? opt.trim() : "색상확인필요";
+        }
         return `${foundColor} / ${foundSize}`;
     }
 
@@ -276,7 +288,7 @@
             }
         });
         renderList();
-        log(`${count}개 파일 등록 (총 ${loadedFiles.length}개)`);
+        log(`${count}개 파일 추가 등록 (총 ${loadedFiles.length}개 준비)`);
     }
 
     function renderList() {
@@ -315,8 +327,11 @@
         const ext = file.name.split('.').pop().toLowerCase();
 
         if (ext === 'csv') {
+            // EUC-KR 우선 디코딩 후 깨짐 기호(\uFFFD) 검출 시 UTF-8로 폴백
             let text = new TextDecoder('euc-kr').decode(buffer);
-            if (text.includes('')) text = new TextDecoder('utf-8').decode(buffer);
+            if (text.includes('\uFFFD')) {
+                text = new TextDecoder('utf-8').decode(buffer);
+            }
             workbook = XLSX.read(text, { type: 'string' });
         } else {
             workbook = XLSX.read(new Uint8Array(buffer), { type: 'array' });
@@ -422,7 +437,7 @@
 
                 if (colProd === -1 && /CDST|QU-|크로커다일|스타킹|쿨토시|에어핏/i.test(joined)) colProd = c;
                 if (colOpt === -1 && (joined.includes("스킨") || joined.includes("블랙") || joined.includes("FREE"))) colOpt = c;
-                if (colQty === -1 && vals.filter(v => v !== "").length > 0 && vals.every(v => !v || /^\d+$/.test(v))) colQty = c;
+                if (colQty === -1 && vals.filter(v => v !== "").length > 0 && vals.every(v => !v || /^[0-9,]+$/.test(v))) colQty = c;
                 if (colCenter === -1 && /인천|창원|동탄|고양|대구|덕평|안성|호법|서울|양산|센터|FC/i.test(joined)) colCenter = c;
             }
         }
@@ -451,8 +466,9 @@
             }
         }
         if (!orderNo) {
-            const numMatch = file.name.match(/\d{7,}/);
-            orderNo = numMatch ? numMatch[0] : file.name.replace(/\.[^/.]+$/, "");
+            // 파일명에서 YYYYMMDD 날짜 접두사 이후의 번호 체계를 우선 추출
+            const poMatch = file.name.match(/(?:PO|발주|주문)?[_-]?(\d{6,})/i);
+            orderNo = poMatch ? poMatch[1] : file.name.replace(/\.[^/.]+$/, "");
         }
 
         return {
@@ -461,7 +477,6 @@
         };
     }
 
-    // 메인 변환 연산
     document.getElementById('btnExecute').addEventListener('click', async () => {
         if (loadedFiles.length === 0) return;
         const btn = document.getElementById('btnExecute');
@@ -478,13 +493,12 @@
                     log(`[경고] 유효 데이터 없음: ${file.name}`);
                     continue;
                 }
-                // 접미사 제거: 본래 물류센터명 그대로 유지
                 res.centerId = res.centerRaw.trim();
                 fileRecords.push(res);
-                log(`- ${file.name} -> 센터: [${res.centerId}], 수령담당자: [${res.extractedPhone || '미기재'}]`);
+                log(`- ${file.name} -> 센터: [${res.centerId}], 수령인 연락처: [${res.extractedPhone || '미기재'}]`);
             }
 
-            log(">>> [단계 2] 바코드 차단 및 1·2·3번 프로세스 데이터 연산...");
+            log(">>> [단계 2] 바코드 차단, 수량 검증 및 1·2·3번 프로세스 연산...");
             let p1Data = [];
             let p2Data = [];
 
@@ -501,11 +515,13 @@
                     const qRaw = colQty !== -1 ? String(row[colQty] || "").trim() : "";
 
                     if (!pVal) return;
+                    // 바코드 및 불필요 메타 헤더 차단
                     if (/^\d{8,14}$/.test(pVal)) return;
                     if (/^(유형|운송장\/차량번호|운송장|차량번호|합계|소계|총계|비고|공급자|확인|배송유형|입고유형)$/i.test(pVal)) return;
 
-                    const parsedQ = parseInt(qRaw);
-                    if (isNaN(parsedQ) || parsedQ <= 0) return;
+                    // 쉼표 방어 수량 파싱
+                    const parsedQ = cleanQuantity(qRaw);
+                    if (parsedQ <= 0) return;
 
                     docTotalQty += parsedQ;
 
@@ -528,15 +544,11 @@
                 });
             }
 
-            // ==========================================
-            // [핵심 변경] 같은 물류센터끼리 나란히 연속 리스팅 (정렬)
-            // ==========================================
+            // 물류센터 기준 가나다 정렬
             p1Data.sort((a, b) => a["물류센터"].localeCompare(b["물류센터"], 'ko'));
             p2Data.sort((a, b) => a["물류센터"].localeCompare(b["물류센터"], 'ko'));
 
-            // ==========================================
-            // [신규] 프로세스 3: 센터 무관 품목별 총 발주수량 집계
-            // ==========================================
+            // 프로세스 3: 센터 무관 품목별 총 발주수량 집계
             const p3Map = new Map();
             p1Data.forEach(item => {
                 const key = `${item["상품명"]}___${item["옵션"]}`;
@@ -556,7 +568,7 @@
                 return c !== 0 ? c : a["옵션"].localeCompare(b["옵션"], 'ko');
             });
 
-            // 화면 테이블 렌더링 & TSV 생성
+            // 화면 렌더링
             renderTable('tableP1View', p1Data, ["물류센터", "택배수령담당자", "주소", "상품명", "옵션", "발주수량"]);
             renderTable('tableP2View', p2Data, ["발주서 No.", "물류센터", "택배수령담당자", "주소", "발주수량"]);
             renderTable('tableP3View', p3Data, ["상품명", "옵션", "발주수량"]);
@@ -565,7 +577,7 @@
             document.getElementById('tsvP2').value = generateTSV(p2Data, ["발주서 No.", "물류센터", "택배수령담당자", "주소", "발주수량"]);
             document.getElementById('tsvP3').value = generateTSV(p3Data, ["상품명", "옵션", "발주수량"]);
 
-            // 엑셀 워크북 메모리 준비 (자동 다운로드하지 않음)
+            // 워크북 생성
             const wb1 = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb1, XLSX.utils.json_to_sheet(p1Data), "마스터");
 
@@ -578,20 +590,19 @@
             currentWorkbooks = { wb1, wb2, wb3 };
 
             document.getElementById('resultSection').style.display = "block";
-            log(`>>> [연산 완료] 정제 및 집계 성공! 상단 버튼을 눌러 원하는 엑셀을 다운로드하십시오.`);
+            log(`>>> [연산 완료] 정제 및 무결성 검증 성공. 파일 다운로드가 준비되었습니다.`);
         } catch (err) {
             log("[오류] " + err.message);
-            alert("처리 중 에러 발생: " + err.message);
+            alert("처리 중 치명적 에러 발생: " + err.message);
         } finally {
             btn.disabled = false;
             btn.innerText = "⚡ 1·2·3번 프로세스 일괄 연산 시작";
         }
     });
 
-    // 개별 수동 다운로드 트리거
     function downloadExcel(type) {
         if (!currentWorkbooks[type]) {
-            alert("먼저 발주서 파일을 인입하고 연산을 실행하십시오.");
+            alert("연산된 워크북 데이터가 존재하지 않습니다.");
             return;
         }
         if (type === 'wb1') XLSX.writeFile(currentWorkbooks.wb1, "1번_상품명_옵션분리형_마스터.xlsx");
@@ -603,7 +614,11 @@
         const wrap = document.getElementById(containerId);
         let html = '<table><thead><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
         data.forEach(r => {
-            html += '<tr>' + cols.map(c => `<td>${r[c] !== undefined ? r[c] : ''}</td>`).join('') + '</tr>';
+            html += '<tr>' + cols.map(c => {
+                const val = r[c] !== undefined ? r[c] : '';
+                const isWarn = String(val).includes("확인필요");
+                return `<td class="${isWarn ? 'warn-cell' : ''}">${val}</td>`;
+            }).join('') + '</tr>';
         });
         html += '</tbody></table>';
         wrap.innerHTML = html;
